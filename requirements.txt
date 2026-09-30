@@ -1,0 +1,12 @@
+# Python 3.12+ dependencies. PyShark packet capture also requires Wireshark/tshark installed separately.
+streamlit>=1.40,<2.0
+torch>=2.2
+pandas>=2.2
+numpy>=1.26
+scikit-learn>=1.4
+matplotlib>=3.8
+plotly>=5.20
+shap>=0.45
+networkx>=3.2
+scapy>=2.5
+pyshark>=0.6

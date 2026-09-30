@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+ENV/
+
+# Model artifacts and generated data
+models/*
+!models/.gitkeep
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/sample/*
+!data/sample/.gitkeep
+
+# Notebooks and tooling
+.ipynb_checkpoints/
+.pytest_cache/
+.coverage
+htmlcov/
+.streamlit/secrets.toml
