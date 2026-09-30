@@ -25,3 +25,6 @@ data/sample/*
 .coverage
 htmlcov/
 .streamlit/secrets.toml
+!models/network_attack_world_model.pt
+!models/world_model_evaluation_results.json
+!data/sample/sample_network_traffic.csv

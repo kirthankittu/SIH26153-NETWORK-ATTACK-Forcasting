@@ -1,0 +1,57 @@
+{
+  "evaluation_status": "complete",
+  "evaluation_scope": "held-out chronological synthetic demonstration set",
+  "synthetic_demo_only": true,
+  "benchmark_results": false,
+  "dataset_path": "C:\\Users\\leela\\OneDrive\\Documents\\ChatGPT\\NETWORK ATTACK\\SIH26153\\data\\sample\\sample_network_traffic.csv",
+  "split_observation_boundaries": {
+    "training_targets_before_index": 1099,
+    "validation_targets_before_index": 1335,
+    "test_targets_from_index": 1335
+  },
+  "split_window_counts": {
+    "train": 1079,
+    "validation": 236,
+    "test": 236
+  },
+  "test_combined_loss": 0.38483352428775724,
+  "test_state_mse_loss": 0.08273857251062232,
+  "test_stage_cross_entropy_loss": 0.3434642348754204,
+  "autoregressive_test_state_mse": 0.08798852562904358,
+  "best_epoch": 24,
+  "best_validation_combined_loss": 0.3389704949774985,
+  "model_config": {
+    "input_size": 13,
+    "hidden_size": 64,
+    "num_layers": 1,
+    "num_classes": 5,
+    "dropout": 0.2
+  },
+  "sequence_length": 20,
+  "rollout_steps": 5,
+  "state_loss_weight": 0.5,
+  "stage_loss_weight": 1.0,
+  "feature_names": [
+    "src_ip_code",
+    "dst_ip_code",
+    "protocol_code",
+    "tcp_flags_code",
+    "src_port",
+    "dst_port",
+    "packet_count",
+    "byte_count",
+    "duration",
+    "ttl",
+    "tcp_window_size",
+    "inter_arrival_mean",
+    "payload_size_mean"
+  ],
+  "transition_accuracy": 0.8933189655172413,
+  "top1_stage_accuracy": 0.8163793103448276,
+  "trajectory_exact_match_rate": 0.6293103448275862,
+  "average_confidence": 0.8642597989789371,
+  "low_confidence_rate": 0.07931034482758621,
+  "low_confidence_threshold": 0.6,
+  "trajectory_count": 232,
+  "steps_per_trajectory": 5
+}
