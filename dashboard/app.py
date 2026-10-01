@@ -48,7 +48,7 @@ EVALUATION_PATH = ROOT / "models" / "world_model_evaluation_results.json"
 BASELINE_COMPARISON_PATH = ROOT / "models" / "baseline_comparison_results.json"
 ROLLOUT_STEPS = 5
 
-st.set_page_config(page_title="ThreatCast AI | SIH26153", layout="wide")
+st.set_page_config(page_title="ThreatCast AI | SIH26153", page_icon=":material/security:", layout="wide")
 
 
 @st.cache_resource(show_spinner="Loading saved world model…")
@@ -87,12 +87,20 @@ def _probability_chart(
 ) -> go.Figure:
     fig = go.Figure()
     for index, stage in enumerate(class_names):
-        fig.add_trace(go.Scatter(x=step_labels, y=probabilities[:, index] * 100, mode="lines+markers", name=stage))
+        fig.add_trace(go.Scatter(x=step_labels, y=probabilities[:, index] * 100, mode="lines+markers", name=display_stage(stage)))
     fig.update_layout(
-        title="Stage probability distribution by forecast point", xaxis_title="Forecast point",
+        title=None, xaxis_title="Forecast point",
         yaxis_title="Probability (%)", yaxis=dict(range=[0, 100]),
-        xaxis=dict(categoryorder="array", categoryarray=list(step_labels)),
-        legend_title="Attack stage", margin=dict(l=10, r=10, t=55, b=10), height=350,
+        xaxis=dict(categoryorder="array", categoryarray=list(step_labels), tickfont=dict(size=10)),
+        legend=dict(
+            title_text="", orientation="h", x=0.5, xanchor="center",
+            y=-0.42, yanchor="top", font=dict(size=10),
+        ),
+        margin=dict(l=10, r=10, t=15, b=120), height=430,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#0c1927",
+        font=dict(color="#dce8f2", family="Arial, sans-serif"),
+        xaxis_gridcolor="#20384c", yaxis_gridcolor="#20384c",
+        colorway=["#55c4dc", "#76a8ff", "#b995ff", "#f0b45b", "#7dd3a7"],
     )
     return fig
 
@@ -141,42 +149,41 @@ def _analyze(records, model, encoder, start, scenario_selection=None):
     }
 
 
-st.markdown(
-    """<style>
-    .stApp { background: #07111d; }
-    .block-container { max-width: 1480px; padding-top: 1.35rem; padding-bottom: 1.5rem; }
-    [data-testid="stMetric"] { background: #0d1b2a; border: 1px solid #21364b; padding: 0.8rem 0.9rem; border-radius: 0.55rem; }
-    [data-testid="stMetricLabel"] p { color: #9db0c4; font-size: 0.82rem; }
-    [data-testid="stMetricValue"] { color: #edf4fb; }
-    div[data-testid="stVerticalBlockBorderWrapper"] { border-color: #20354a; }
-    h1, h2, h3 { letter-spacing: -0.02em; }
-    </style>""",
-    unsafe_allow_html=True,
+from dashboard.ui_components import (
+    display_stage,
+    inject_custom_css,
+    render_detail_cards,
+    render_forecast_rail,
+    render_header,
+    render_stage_progression,
+    render_summary_cards,
 )
-st.title("ThreatCast AI")
-st.subheader("AI-Based Network Attack Forecasting & Future-State Simulation")
-st.caption("Offline SOC Analysis • Temporal Forecasting • 5-Step Simulation")
 
-with st.container(border=True):
-    st.markdown("### Input / Scenario Control")
-    control_columns = st.columns([1.15, 1.2, 2.8])
-    source = control_columns[0].radio(
-        "Traffic Source", ("Built-in synthetic demo", "Upload CSV"), index=0
+inject_custom_css()
+
+with st.sidebar:
+    st.markdown("## ThreatCast AI")
+    st.caption("SOC analysis controls")
+    st.badge("OFFLINE CSV ANALYSIS", icon=":material/database:", color="blue")
+    st.markdown("#### DATA SOURCE")
+    source = st.radio(
+        "Choose traffic source",
+        ("Built-in Synthetic Demo", "Upload CSV"),
+        index=0,
+        key="traffic_source",
     )
     uploaded = None
     scenario = None
     if source == "Upload CSV":
-        uploaded = control_columns[1].file_uploader("Network traffic CSV", type=["csv"])
+        st.markdown("#### UPLOAD")
+        uploaded = st.file_uploader("Network traffic CSV", type=["csv"], key="network_csv")
     else:
-        scenario = control_columns[1].selectbox("Demo Scenario", DEMO_SCENARIOS, index=0)
-    control_columns[2].caption(
-        "Required CSV columns: timestamp and protocol. attack_stage is optional; "
-        "missing numeric flow features are imputed."
-    )
-    controls_slot = st.empty()
+        st.markdown("#### SCENARIO")
+        scenario = st.selectbox("Demo scenario", DEMO_SCENARIOS, index=0, key="demo_scenario")
+    st.caption("CSV schema: timestamp and protocol required; attack_stage optional. No data is downloaded automatically.")
 
-# Section guide remains visible before analysis and becomes populated after Analyze.
 if not CHECKPOINT_PATH.is_file():
+    render_header("MODEL CHECKPOINT UNAVAILABLE")
     st.error(f"Saved world-model checkpoint not found: {CHECKPOINT_PATH}")
     st.stop()
 
@@ -187,13 +194,16 @@ try:
         raise ValueError("The saved model checkpoint has no fitted feature encoder.")
     encoder = encoder_from_checkpoint(encoder_state)
 except Exception as exc:
+    render_header("MODEL CHECKPOINT UNAVAILABLE")
     st.error(f"Could not load the saved world model: {exc}")
     st.stop()
+
+render_header()
 
 records = None
 records_error = None
 try:
-    if source == "Built-in synthetic demo":
+    if source == "Built-in Synthetic Demo":
         if not SAMPLE_PATH.is_file():
             raise FileNotFoundError(f"Built-in synthetic CSV not found: {SAMPLE_PATH}")
         records = cached_sample(str(SAMPLE_PATH), SAMPLE_PATH.stat().st_mtime_ns)
@@ -209,35 +219,47 @@ if records is not None:
     try:
         ordered_for_control, _, _ = prepare_records(records, encoder, DEFAULT_WINDOW_SIZE)
         max_start = len(ordered_for_control) - DEFAULT_WINDOW_SIZE
-        if source == "Built-in synthetic demo":
+        if source == "Built-in Synthetic Demo":
             scenario_selection = select_demo_scenario(records, scenario, DEFAULT_WINDOW_SIZE)
             suggested_start = scenario_selection["window_start"]
         else:
             suggested_start = max_start
-        selection_context = (source, scenario if source == "Built-in synthetic demo" else None)
+        selection_context = (source, scenario if source == "Built-in Synthetic Demo" else None)
         if st.session_state.get("_scenario_selection_context") != selection_context:
             st.session_state["sequence_start_row"] = suggested_start
             st.session_state["_scenario_selection_context"] = selection_context
-        with controls_slot.container():
-            slider_col, action_col = st.columns([3, 1])
-            selected_start = slider_col.slider(
+        with st.sidebar:
+            st.markdown("#### SEQUENCE CONTROL")
+            selected_start = st.slider(
                 "Sequence start row", min_value=0, max_value=max_start,
-                help="Choose the 20-observation context used for the next-stage forecast. Scenario selection sets the initial row.",
+                help="Select the 20-observation context used for the next-stage forecast.",
                 key="sequence_start_row",
             )
-            run = action_col.button("Analyze Traffic", type="primary")
+            run = st.button("ANALYZE TRAFFIC", type="primary", width="stretch", key="analyze_traffic")
+            st.caption(f"Selected window · rows {selected_start + 1}–{selected_start + DEFAULT_WINDOW_SIZE} of {len(ordered_for_control):,}")
     except ValueError as exc:
         records_error = str(exc)
 if records is None:
-    with controls_slot.container():
-        st.caption("Choose or upload a valid CSV to enable analysis.")
-        st.button("Analyze Traffic", type="primary", disabled=True)
+    with st.sidebar:
+        st.markdown("#### SEQUENCE CONTROL")
+        st.caption("Select a source with at least 20 compatible observations.")
+        st.button("ANALYZE TRAFFIC", type="primary", disabled=True, width="stretch", key="analyze_traffic_disabled")
 
 if records_error:
-    st.error(f"Unable to load this CSV: {records_error}")
+    st.error(f"Unable to load this input: {records_error}")
 
-# Do not keep showing a previous forecast after the user switches to an empty
-# or invalid upload source.
+with st.sidebar:
+    st.divider()
+    st.markdown("#### SYSTEM HEALTH")
+    st.badge("MODEL CHECKPOINT LOADED", icon=":material/check_circle:", color="green")
+    if records is not None and not records_error:
+        st.badge("INPUT READY", icon=":material/check_circle:", color="green")
+    elif records_error:
+        st.badge("INPUT NEEDS ATTENTION", icon=":material/warning:", color="orange")
+    else:
+        st.badge("AWAITING CSV", icon=":material/pending:", color="gray")
+
+# Do not keep showing a previous forecast after changing to an empty/invalid source.
 if records is None and st.session_state.get("analysis_source") != source:
     st.session_state.pop("analysis", None)
     st.session_state.pop("analysis_source", None)
@@ -247,7 +269,7 @@ source_changed = st.session_state.get("analysis_source") != source
 selection_changed = previous_analysis is not None and previous_analysis.get("start") != selected_start
 scenario_changed = (
     previous_analysis is not None
-    and source == "Built-in synthetic demo"
+    and source == "Built-in Synthetic Demo"
     and (previous_analysis.get("scenario_selection") or {}).get("scenario") != scenario
 )
 should_analyze = bool(run and records is not None) or bool(
@@ -258,21 +280,22 @@ if should_analyze:
         st.session_state["analysis"] = _analyze(records, model, encoder, selected_start, scenario_selection)
         st.session_state["analysis_source"] = source
     except (ValueError, FileNotFoundError, UnicodeError, OSError) as exc:
-        st.error(f"Unable to analyze this CSV: {exc}")
+        st.error(f"Unable to analyze this input: {exc}")
     except Exception as exc:
-        st.error(f"Analysis failed: {type(exc).__name__}: {exc}")
+        st.error(f"Analysis could not be completed ({type(exc).__name__}): {exc}")
 
 analysis = st.session_state.get("analysis")
 if analysis is None:
-    st.info("Choose the built-in synthetic demo or upload a compatible CSV, then select **Analyze traffic**. No data is downloaded automatically.")
-    for title in (
-        "Dataset Upload", "Current Network State", "Predicted Next Attack Stage",
-        "5-Step Attack Trajectory", "Attack Probability Timeline", "Forecast Evidence",
-        "MITRE ATT&CK Context", "Model and Evaluation",
-    ):
-        with st.container(border=True):
-            st.subheader(title)
-            st.caption("Run an analysis to populate this panel.")
+    with st.container(border=True):
+        if records is not None and not records_error:
+            st.badge("READY FOR ANALYSIS", icon=":material/check_circle:", color="green")
+            st.subheader("Selected input is ready")
+            st.write("The saved model and selected traffic window are loaded. Select **ANALYZE TRAFFIC** in the sidebar to generate the forecast.")
+        else:
+            st.badge("AWAITING INPUT", icon=":material/pending:", color="orange")
+            st.subheader("Start an offline analysis")
+            st.write("Choose a development scenario or upload a compatible network-traffic CSV, then select **ANALYZE TRAFFIC** in the sidebar.")
+        st.caption("The dashboard does not monitor a live network. Forecast values appear only after analysis runs with the saved model.")
     st.stop()
 
 result = analysis
@@ -290,196 +313,146 @@ security_alert = build_forward_looking_alert(
     forecast_horizon=len(rollout.future_steps),
 )
 
-st.caption(f"Analysis ready · {st.session_state.get('analysis_source', 'traffic data')} · {len(result['records']):,} observations · {result['features'].shape[1]} model features")
-scenario_result = result.get("scenario_selection")
-with st.container(border=True):
-    if scenario_result:
-        st.subheader(f"Demo Scenario · {scenario_result['scenario']}")
-        st.markdown("**Scenario Description**")
-        st.write(scenario_result["description"])
-        stage_summary = " · ".join(f"{stage}: {count}" for stage, count in scenario_result["stage_counts"].items())
-        st.caption(
-            f"Selected model context: rows {scenario_result['window_start'] + 1}–{scenario_result['window_end'] + 1}. "
-            f"Actual labels in context: {stage_summary}."
-        )
-    else:
-        st.subheader("Uploaded CSV Scenario")
-        st.write("Forecasting the selected 20-observation context from the uploaded traffic data.")
-    st.caption("Demo scenarios select traffic windows from the development dataset. Forecasts are generated by the trained world model.")
+st.subheader("Executive SOC summary")
+render_summary_cards(
+    observed["current_observed_stage"], prediction["stage"], prediction["confidence"],
+    format_non_benign_forecast_index(forecast_timeline[0]["non_benign_forecast_index"]),
+    len(rollout.future_steps),
+)
+st.caption("Derived as 1 − P(BENIGN); this is a model-derived index, not a calibrated probability that an attack will occur.")
+confidence = confidence_status(prediction["confidence"])
+if confidence == "LOW_CONFIDENCE":
+    st.warning("LOW CONFIDENCE — additional telemetry recommended.")
 
 with st.container(border=True):
-    st.subheader("SOC Summary")
-    summary_cols = st.columns(5)
-    summary_cols[0].metric("Current Network State", observed["current_observed_stage"])
-    summary_cols[1].metric("Predicted Next Attack Stage", prediction["stage"])
-    summary_cols[2].metric("Forecast Confidence", f"{prediction['confidence']:.1%}")
-    summary_cols[3].metric(
-        "Non-Benign Forecast Index",
-        format_non_benign_forecast_index(forecast_timeline[0]["non_benign_forecast_index"]),
-    )
-    summary_cols[4].metric("Forecast Horizon", f"{len(rollout.future_steps)} steps")
-    st.caption("Non-Benign Forecast Index = 1 − P(BENIGN); it is not a calibrated probability that an attack will occur.")
-    status = confidence_status(prediction["confidence"])
-    st.caption(f"Confidence status: {status} · threshold 0.60")
-    if status == "LOW_CONFIDENCE":
-        st.warning("LOW_CONFIDENCE: treat this forecast as uncertain; confidence is not a calibrated incident probability.")
-
-with st.container(border=True):
-    st.subheader("Forward-Looking Security Alert")
-    st.info(security_alert["headline"])
-    alert_columns = st.columns(4)
-    alert_columns[0].metric("CURRENT OBSERVED STAGE", security_alert["current_observed_stage"])
-    alert_columns[1].metric("FORECASTED NEXT STAGE", security_alert["forecasted_next_stage"])
-    alert_columns[2].metric("MODEL CONFIDENCE", f"{security_alert['model_confidence']:.1%}")
-    alert_columns[3].metric("FORECAST HORIZON", f"{security_alert['forecast_horizon']} steps")
-    st.write(security_alert["explanation"])
-    if security_alert["low_confidence"]:
-        st.warning(security_alert["low_confidence_message"])
-    st.markdown("**Recommended Analyst Action**")
-    for action in security_alert["recommended_actions"]:
-        st.markdown(f"- {action}")
+    st.markdown("### Forward-Looking Security Alert")
+    alert_col, actions_col = st.columns([1.4, 1], vertical_alignment="top")
+    with alert_col:
+        if security_alert["low_confidence"]:
+            st.warning(security_alert["headline"])
+        elif security_alert["is_benign_forecast"]:
+            st.success(security_alert["headline"])
+        else:
+            st.info(security_alert["headline"])
+        render_detail_cards((
+            ("CURRENT OBSERVED STAGE", display_stage(security_alert["current_observed_stage"])),
+            ("PREDICTED NEXT STAGE", display_stage(security_alert["forecasted_next_stage"])),
+            ("MODEL CONFIDENCE", f"{security_alert['model_confidence']:.1%}"),
+            ("FORECAST HORIZON", f"{security_alert['forecast_horizon']} steps"),
+        ))
+        st.write(security_alert["explanation"])
+        if security_alert["low_confidence"]:
+            st.warning(security_alert["low_confidence_message"])
+    with actions_col:
+        st.markdown("#### Recommended analyst actions")
+        for action in security_alert["recommended_actions"]:
+            st.markdown(f"- {action}")
     st.caption(security_alert["disclaimer"])
 
 with st.container(border=True):
-    st.subheader("Attack Progression")
-    selected_labels = result["labels"][selected_start : selected_start + DEFAULT_WINDOW_SIZE]
-    progression_chain = []
-    for label in selected_labels:
-        stage = str(label).strip().upper() or "UNKNOWN"
-        if stage in {"BENIGN", "RECONNAISSANCE", "INITIAL_ACCESS", "LATERAL_MOVEMENT", "COMMAND_AND_CONTROL"}:
-            if not progression_chain or progression_chain[-1] != stage:
-                progression_chain.append(stage)
-    if progression_chain:
-        st.markdown(" → ".join(progression_chain))
-        st.caption("Observed from traffic window · actual labels in row order; consecutive duplicates are collapsed.")
-    else:
-        st.info("No recognized attack stage is labeled in this traffic window.")
-    if observed["complete_attack_progression"]:
-        st.caption("All four attack stages are present in this window in the observed order.")
-    else:
-        st.info("This selected traffic window does not contain the complete attack progression.")
+    st.markdown("### Selected data context")
+    label_available = any(str(label).strip().upper() not in {"", "UNKNOWN"} for label in result["labels"])
+    render_detail_cards((
+        ("DATA SOURCE", st.session_state.get("analysis_source", "Traffic data")),
+        ("OBSERVATIONS", f"{len(result['records']):,}"),
+        ("WINDOW", f"Rows {selected_start + 1}–{selected_start + DEFAULT_WINDOW_SIZE}"),
+        ("LABEL STATUS", "Available" if label_available else "Unlabeled"),
+    ))
 
-    current_col, forecast_col = st.columns(2)
-    with current_col:
-        st.markdown("**CURRENT OBSERVED STAGE**")
-        st.markdown(f"### {observed['current_observed_stage']}")
-    with forecast_col:
-        st.markdown("**AI FORECAST**")
-        st.markdown(f"### {prediction['stage']}")
-        st.write(f"Confidence: **{prediction['confidence']:.1%}**")
-    st.caption("The observed stage comes from the selected rows' labels. The AI forecast and confidence come from the existing saved world model.")
+with st.container(border=True):
+    render_stage_progression(observed, prediction["stage"], prediction["confidence"])
 
-left, right = st.columns([1, 1])
-with left:
-    with st.container(border=True):
-        st.subheader("Network Telemetry · Dataset Context")
-        st.write(f"Source: **{st.session_state.get('analysis_source', 'traffic data')}**")
-        st.write(f"Rows: **{len(result['records']):,}** · Sequence length: **{DEFAULT_WINDOW_SIZE}** · Features: **{result['features'].shape[1]}**")
-        st.caption("CSV upload uses the Phase 2 schema validator and the model checkpoint’s training-fitted encoder. Missing numeric inputs are safely median-imputed.")
-with right:
-    with st.container(border=True):
-        st.subheader("Current Network State · Telemetry Summary")
-        telemetry = result["telemetry"]
-        cols = st.columns(4)
-        for col, key, label in zip(cols, ("packet_count", "byte_count", "duration", "ttl"), ("Packets · sum", "Bytes · sum", "Duration · mean", "TTL · mean")):
-            col.metric(label, _fmt(telemetry[key]))
-        cols2 = st.columns(4)
-        for col, key, label in zip(cols2, ("tcp_window_size", "inter_arrival_mean", "payload_size_mean", "dst_ports"), ("TCP window · mean", "Inter-arrival · mean", "Payload size · mean", "Destination ports")):
-            val = telemetry[key]
-            col.metric(label, ", ".join(val[:4]) if isinstance(val, list) and val else (_fmt(val) if not isinstance(val, list) else "—"))
-        st.caption(f"Source ports in selected window: {', '.join(telemetry['src_ports'][:8]) or '—'}")
+st.subheader("AI FUTURE-STATE SIMULATION")
+st.caption("Current selected window model output → five autoregressive forecast steps. The first node is the model's next-stage output for the selected window, not an observed label.")
+render_forecast_rail(forecast_timeline)
+st.caption("Confidence is the maximum class score. The Non-Benign Forecast Index is derived only from 1 − P(BENIGN); neither is a calibrated probability that an attack will occur.")
 
-left, right = st.columns([1, 1])
-with left:
-    with st.container(border=True):
-        st.subheader("Predicted Next Attack Stage · Class Distribution")
-        st.markdown(f"### {prediction['stage']}")
-        st.write(f"Confidence: **{prediction['confidence']:.1%}**")
-        st.caption("This is a synthetic-development model output, not a real-world detection or calibrated probability.")
-        st.write("Class probabilities")
-        for stage in class_names:
-            st.progress(prediction["probabilities"][stage], text=f"{stage}: {prediction['probabilities'][stage]:.1%}")
-with right:
-    with st.container(border=True):
-        st.subheader("5-Step Attack Trajectory")
-        for item in rollout.future_steps:
-            suffix = " · LOW_CONFIDENCE" if item["confidence_status"] == "LOW_CONFIDENCE" else ""
-            st.write(f"**Step {item['step']}: {item['predicted_stage']}** · {item['confidence']:.1%}{suffix}")
-        st.caption("Each predicted network state is fed into the next rollout step (autoregressive forecast).")
+with st.container(border=True):
+    st.markdown("### FORECAST STAGE PROBABILITY TIMELINE")
+    st.caption("Model class probabilities across the forecast horizon. The model repeatedly forecasts the next state using its previous prediction.")
+    timeline_matrix = np.asarray(
+        [[row["probabilities"][stage] for stage in class_names] for row in forecast_timeline],
+        dtype=np.float64,
+    )
+    timeline_labels = tuple(row["step"] for row in forecast_timeline)
+    st.plotly_chart(
+        _probability_chart(timeline_matrix, class_names, timeline_labels),
+        width="stretch", theme="streamlit",
+    )
 
-left, right = st.columns([1, 1])
-with left:
-    with st.container(border=True):
-        st.subheader("Forecast Stage Probability Timeline")
+with st.expander("Input, scenario & telemetry details", icon=":material/query_stats:"):
+    scenario_result = result.get("scenario_selection")
+    if scenario_result:
+        st.markdown(f"**Demo scenario · {scenario_result['scenario']}**")
+        st.write(scenario_result["description"])
+        stage_summary = " · ".join(f"{stage}: {count}" for stage, count in scenario_result["stage_counts"].items())
         st.caption(
-            "The model repeatedly forecasts the next state using its previous prediction, "
-            "producing an autoregressive view of possible future progression."
+            f"Selected context rows {scenario_result['window_start'] + 1}–{scenario_result['window_end'] + 1} · "
+            f"observed labels: {stage_summary}."
         )
-        timeline_columns = st.columns(6)
-        for column, row in zip(timeline_columns, forecast_timeline):
-            column.metric(
-                row["step"], row["predicted_stage"],
-                delta=f"Confidence {row['confidence']:.1%}", delta_color="off",
-            )
-            column.caption(
-                "Non-Benign Forecast Index\n"
-                + format_non_benign_forecast_index(row["non_benign_forecast_index"])
-            )
-        st.caption(
-            "Derived as 1 − P(BENIGN); this is a model-derived index, not a calibrated probability that an attack will occur."
-        )
-        timeline_matrix = np.asarray(
-            [[row["probabilities"][stage] for stage in class_names] for row in forecast_timeline],
-            dtype=np.float64,
-        )
-        timeline_labels = tuple(row["step"] for row in forecast_timeline)
-        st.plotly_chart(
-            _probability_chart(timeline_matrix, class_names, timeline_labels),
-            width="stretch", theme="streamlit",
-        )
-with right:
-    with st.container(border=True):
-        st.subheader("Autoregressive Attack Trajectory")
-        st.write(" → ".join(rollout.predicted_stages))
-        st.write("Step confidence and status")
-        for item in rollout.future_steps:
-            st.write(f"Step {item['step']}: {item['predicted_stage']} · {item['confidence']:.1%} · {item['confidence_status']}")
+        st.caption("Demo scenarios select traffic windows from the development dataset. Forecasts are generated by the trained world model.")
+    else:
+        st.markdown("**Uploaded CSV analysis**")
+        st.caption("Forecasting the selected observation window from the uploaded traffic data.")
+    telemetry = result["telemetry"]
+    telemetry_items = (
+        ("Packets · sum", telemetry["packet_count"]),
+        ("Bytes · sum", telemetry["byte_count"]),
+        ("Duration · mean", telemetry["duration"]),
+        ("TTL · mean", telemetry["ttl"]),
+        ("TCP window · mean", telemetry["tcp_window_size"]),
+        ("Inter-arrival · mean", telemetry["inter_arrival_mean"]),
+        ("Payload size · mean", telemetry["payload_size_mean"]),
+    )
+    telemetry_cols = st.columns(4)
+    for column, (label, value) in zip(telemetry_cols, telemetry_items):
+        column.metric(label, _fmt(value))
+    st.caption(f"Source ports: {', '.join(telemetry['src_ports'][:8]) or '—'} · Destination ports: {', '.join(telemetry['dst_ports'][:8]) or '—'}")
 
-left, right = st.columns([1, 1])
-with left:
+evidence_col, mitre_col = st.columns([1.2, 1])
+with evidence_col:
     with st.container(border=True):
-        st.subheader("Model Evidence — Reference-State Deviation")
+        st.markdown("### MODEL EVIDENCE")
+        st.caption("Reference-State Feature Deviation")
         st.caption(result["evidence"]["interpretation_note"])
-        st.caption(result["reference_note"])
         for item in result["evidence"]["evidence"]:
-            st.write(f"**{item['feature']}** · {item['direction']} · deviation {item['normalized_deviation']:.3f}")
+            row_cols = st.columns([1.4, 0.8, 0.8], vertical_alignment="center")
+            row_cols[0].markdown(f"**{item['feature']}**")
+            row_cols[1].badge(str(item["direction"]).upper(), color="blue")
+            row_cols[2].caption(f"Deviation · {item['normalized_deviation']:.3f}")
             st.caption(item["description"])
         if not result["evidence"]["evidence"]:
             st.info("No feature deviations were identified against the reference state.")
-        st.caption("Evidence describes deviations from a reference, not causal attribution or model-gradient importance.")
-with right:
+        st.caption(result["reference_note"])
+        st.caption("This evidence is based on deviation from the reference state and is not causal attribution.")
+
+with mitre_col:
     with st.container(border=True):
-        st.subheader("MITRE ATT&CK Context")
+        st.markdown("### MITRE ATT&CK CONTEXT")
         mapping = result["mitre"]
         if mapping["tactic"]:
-            st.write(f"**{mapping['tactic']}** ({mapping['tactic_id']})")
+            st.caption("TACTIC")
+            st.markdown(f"**{mapping['tactic']}** · {mapping['tactic_id']}")
             for technique in mapping["potential_techniques"]:
+                st.caption("TECHNIQUE · TECHNIQUE ID")
                 st.markdown(f"[{technique['name']} ({technique['id']})]({technique['url']})")
-                st.caption(technique["reason"])
+                st.caption(f"CONTEXT · {technique['reason']}")
         else:
-            st.write("BENIGN has no suggested ATT&CK technique in this prototype.")
+            st.badge("BENIGN", color="green")
+            st.write("No suggested ATT&CK technique is associated with the BENIGN forecast in this prototype.")
+        st.caption("Contextual mapping only — the traffic data does not by itself prove that the technique occurred.")
         st.caption(mapping["disclaimer"])
 
 with st.container(border=True):
-    st.subheader("Model Evaluation & Baseline Comparison")
+    st.markdown("### MODEL EVALUATION")
+    st.caption("Synthetic development-data evaluation")
     try:
         evaluation = cached_evaluation(str(EVALUATION_PATH), EVALUATION_PATH.stat().st_mtime_ns)
         if evaluation.get("synthetic_demo_only") is True:
             st.warning("Synthetic development evaluation only · not a public benchmark · not real-world performance.")
         else:
             st.info("Evaluation scope is recorded in the saved result file; review its scope before interpreting metrics.")
-        st.caption(f"Scope: {evaluation.get('evaluation_scope', 'not specified')}")
-        st.caption(f"Checkpoint dataset type: {getattr(model, 'dataset_type', 'synthetic development')}")
+        st.caption(f"Scope: {evaluation.get('evaluation_scope', 'not specified')} · checkpoint dataset: {getattr(model, 'dataset_type', 'synthetic development')}")
         eval_cols = st.columns(4)
         values = (
             ("Top-1 stage accuracy", evaluation.get("top1_stage_accuracy"), ".1%"),
@@ -489,35 +462,34 @@ with st.container(border=True):
         )
         for col, (label, value, fmt) in zip(eval_cols, values):
             col.metric(label, "—" if value is None else format(float(value), fmt))
-        st.caption("These are the saved held-out chronological synthetic evaluation results; no metrics are computed from the uploaded data.")
-    except FileNotFoundError:
-        st.info("Saved evaluation results are unavailable. No metrics are being inferred or fabricated.")
+        st.caption("Saved held-out chronological synthetic measurements; no metrics are computed from uploaded traffic.")
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        st.info(f"Saved evaluation results are unavailable: {exc}")
 
-    st.markdown("**Saved baseline comparison**")
+    st.markdown("#### Temporal world model vs Logistic Regression baseline")
     try:
         comparison = cached_baseline_comparison(
             str(BASELINE_COMPARISON_PATH), BASELINE_COMPARISON_PATH.stat().st_mtime_ns
         )
         st.caption(comparison["evaluation_label"])
-        headers = st.columns([1.2, 1, 1])
-        headers[0].markdown("**Metric**")
-        headers[1].markdown("**NumPy Logistic Regression**")
-        headers[2].markdown("**Temporal World Model**")
+        header_cols = st.columns([1.2, 1, 1])
+        header_cols[0].markdown("**Metric**")
+        header_cols[1].markdown("**Temporal World Model**")
+        header_cols[2].markdown("**Logistic Regression Baseline**")
         for row in format_baseline_comparison_table(comparison):
             cells = st.columns([1.2, 1, 1])
             cells[0].write(row["Metric"])
-            cells[1].write(row["NumPy Logistic Regression"])
-            cells[2].write(row["Temporal World Model"])
-        st.caption(
-            "The Logistic Regression baseline uses one normalized observation, while the temporal world model uses the preceding 20 observations. "
-            "Both are evaluated on the same chronological held-out targets."
-        )
-        st.caption(
-            "These results are development-data measurements and should not be interpreted as real-world benchmark performance."
-        )
+            cells[1].write(row["Temporal World Model"])
+            cells[2].write(row["NumPy Logistic Regression"])
+        st.caption("The Logistic Regression baseline uses one normalized observation, while the temporal world model uses the preceding 20 observations. Both are evaluated on the same chronological held-out targets.")
+        st.caption("Synthetic development-data evaluation — not real-world benchmark performance.")
     except (FileNotFoundError, OSError, ValueError) as exc:
         st.info(f"Saved baseline comparison is unavailable: {exc}")
 
-st.divider()
-st.caption("ThreatCast AI — SIH26153 Prototype")
-st.caption("Forecast confidence is a model output, not a calibrated probability that an attack will occur.")
+with st.container(border=True):
+    st.markdown("#### Technical limitations")
+    st.caption("This prototype analyzes uploaded CSV data or a built-in synthetic development dataset. It does not provide real-time monitoring or automatic traffic blocking.")
+    st.caption("Forecast confidence is a model output, not a calibrated probability that an attack will occur.")
+    st.caption("Synthetic development results should not be interpreted as benchmark performance. ATT&CK references are contextual and do not establish that a technique occurred.")
+
+st.caption("ThreatCast AI  ·  SIH26153 • AI-Based Network Attack Forecasting")
